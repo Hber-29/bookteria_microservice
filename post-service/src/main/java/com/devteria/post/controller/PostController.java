@@ -33,8 +33,9 @@ public class PostController {
 
     @GetMapping("/my-posts")
     ApiResponse<PageResponse<PostResponse>> myPosts(
+            // các param đầu vào có thể nhận từ phía client.
             @RequestParam(value = "page", required = false, defaultValue = "1") int page,
-            @RequestParam(value = "size", required = false, defaultValue = "10") int size
+            @RequestParam(value = "size", required = false, defaultValue = "5") int size
             ){
         return ApiResponse.<PageResponse<PostResponse>>builder()
                 .result(postService.getMyPosts(page, size))
