@@ -1,24 +1,26 @@
 package com.devteria.profile.service;
 
-import com.devteria.profile.dto.request.UpdateProfileRequest;
-import com.devteria.profile.exception.AppException;
-import com.devteria.profile.exception.ErrorCode;
+import java.util.List;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.devteria.profile.dto.request.ProfileCreationRequest;
+import com.devteria.profile.dto.request.UpdateProfileRequest;
 import com.devteria.profile.dto.response.UserProfileResponse;
 import com.devteria.profile.entity.UserProfile;
+import com.devteria.profile.exception.AppException;
+import com.devteria.profile.exception.ErrorCode;
 import com.devteria.profile.mapper.UserProfileMapper;
 import com.devteria.profile.repository.UserProfileRepository;
+import com.devteria.profile.repository.httpClient.FileClient;
 
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.experimental.FieldDefaults;
 import lombok.extern.slf4j.Slf4j;
-
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +29,7 @@ import java.util.List;
 public class UserProfileService {
     UserProfileRepository userProfileRepository;
     UserProfileMapper userProfileMapper;
+    FileClient fileClient;
 
     public UserProfileResponse createProfile(ProfileCreationRequest request) {
         UserProfile userProfile = userProfileMapper.toUserProfile(request);
@@ -36,17 +39,16 @@ public class UserProfileService {
     }
 
     public UserProfileResponse getByUserId(String userId) {
-        UserProfile userProfile =
-                userProfileRepository.findByUserId(userId)
-                        .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_EXISTED));
+        UserProfile userProfile = userProfileRepository
+                .findByUserId(userId)
+                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_EXISTED));
 
         return userProfileMapper.toUserProfileResponse(userProfile);
     }
 
     public UserProfileResponse getProfile(String id) {
         UserProfile userProfile =
-                userProfileRepository.findById(id).orElseThrow(
-                        () -> new AppException(ErrorCode.USER_NOT_EXISTED));
+                userProfileRepository.findById(id).orElseThrow(() -> new AppException(ErrorCode.USER_NOT_EXISTED));
 
         return userProfileMapper.toUserProfileResponse(userProfile);
     }
@@ -62,7 +64,8 @@ public class UserProfileService {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         String userId = authentication.getName();
 
-        var profile = userProfileRepository.findByUserId(userId)
+        var profile = userProfileRepository
+                .findByUserId(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_EXISTED));
 
         return userProfileMapper.toUserProfileResponse(profile);
@@ -72,10 +75,27 @@ public class UserProfileService {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         String userId = authentication.getName();
 
-        var profile = userProfileRepository.findByUserId(userId)
+        var profile = userProfileRepository
+                .findByUserId(userId)
                 .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_EXISTED));
 
         userProfileMapper.update(profile, request);
+
+        return userProfileMapper.toUserProfileResponse(userProfileRepository.save(profile));
+    }
+
+    public UserProfileResponse updateAvatar(MultipartFile file) {
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        String userId = authentication.getName();
+
+        var profile = userProfileRepository
+                .findByUserId(userId)
+                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_EXISTED));
+
+        // goij sang file service để uploadfile
+        var avatar = fileClient.uploadFile(file);
+        // gán đường dẫn url để get file ra
+        profile.setAvatar(avatar.getResult().getUrl());
 
         return userProfileMapper.toUserProfileResponse(userProfileRepository.save(profile));
     }
