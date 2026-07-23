@@ -1,12 +1,13 @@
 package com.devteria.chat.entity;
 
-import lombok.*;
-import lombok.experimental.FieldDefaults;
+import java.time.Instant;
+
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.MongoId;
 
-import java.time.Instant;
+import lombok.*;
+import lombok.experimental.FieldDefaults;
 
 @Setter
 @Getter
@@ -19,6 +20,7 @@ public class ChatMessage {
     @MongoId
     String id;
 
+    // để cho mã hash không được lặp lại điều này tránh việc tạo ra 2 đoạn hội thoại giống nhau
     @Indexed
     String conversationId;
 
@@ -26,6 +28,7 @@ public class ChatMessage {
 
     ParticipantInfo sender;
 
+    // sắp xếp ngày tạo theo index để có thể lấy đoạn chat mới nhất theo thứ tự
     @Indexed
     Instant createdDate;
 }
