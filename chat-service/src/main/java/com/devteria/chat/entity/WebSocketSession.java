@@ -1,9 +1,7 @@
 package com.devteria.chat.entity;
 
 import java.time.Instant;
-import java.util.List;
 
-import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.MongoId;
 
@@ -15,20 +13,13 @@ import lombok.experimental.FieldDefaults;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Document(collection = "conversation")
+@Document(collection = "web-socket-session")
 @FieldDefaults(level = AccessLevel.PRIVATE)
-public class Conversation {
+public class WebSocketSession {
     @MongoId
     String id;
 
-    String type; // GROUP, DIRECT
-
-    @Indexed(unique = true)
-    String participantsHash;
-
-    List<ParticipantInfo> participants;
-
-    Instant createdDate;
-
-    Instant modifiedDate;
+    String socketSessionId;
+    String userId;
+    Instant createdAt;
 }

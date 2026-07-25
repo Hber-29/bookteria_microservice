@@ -39,29 +39,32 @@ export default function Chat() {
   const [error, setError] = useState(null);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [messagesMap, setMessagesMap] = useState({});
+
   const messageContainerRef = useRef(null);
-  const socketRef = useRef(null); // Function to scroll to the bottom of the message container
+  const socketRef = useRef(null);
+
+  // Ref lưu giữ selectedConversation mới nhất để tránh lỗi Stale Closure trong Socket
+  const selectedConversationRef = useRef(selectedConversation);
+  useEffect(() => {
+    selectedConversationRef.current = selectedConversation;
+  }, [selectedConversation]);
+
+  // Hàm tự động cuộn xuống tin nhắn mới nhất
   const scrollToBottom = useCallback(() => {
     if (messageContainerRef.current) {
-      // Immediate scroll attempt
       messageContainerRef.current.scrollTop =
         messageContainerRef.current.scrollHeight;
 
-      // Backup attempt with a small timeout to ensure DOM updates are complete
       setTimeout(() => {
-        messageContainerRef.current.scrollTop =
-          messageContainerRef.current.scrollHeight;
+        if (messageContainerRef.current) {
+          messageContainerRef.current.scrollTop =
+            messageContainerRef.current.scrollHeight;
+        }
       }, 100);
-
-      // Final attempt with a longer timeout
-      setTimeout(() => {
-        messageContainerRef.current.scrollTop =
-          messageContainerRef.current.scrollHeight;
-      }, 300);
     }
   }, []);
 
-  // New chat popover handlers
+  // Handlers mở / đóng popover tạo chat mới
   const handleNewChatClick = (event) => {
     setNewChatAnchorEl(event.currentTarget);
   };
@@ -71,34 +74,34 @@ export default function Chat() {
   };
 
   const handleSelectNewChatUser = async (user) => {
-    const response = await createConversation({
-      type: "DIRECT",
-      participantIds: [user.userId],
-    });
+    try {
+      const response = await createConversation({
+        type: "DIRECT",
+        participantIds: [user.userId],
+      });
 
-    const newConversation = response?.data?.result;
+      const newConversation = response?.data?.result;
+      if (!newConversation) return;
 
-    // Check if we already have a conversation with this user
-    const existingConversation = conversations.find(
-      (conv) => conv.id === newConversation.id
-    );
-
-    if (existingConversation) {
-      // If conversation exists, just select it
-      setSelectedConversation(existingConversation);
-    } else {
-      // Add to conversations list
-      setConversations((prevConversations) => [
-        newConversation,
-        ...prevConversations,
-      ]);
-
-      // Select this new conversation
-      setSelectedConversation(newConversation);
+      setConversations((prevConversations) => {
+        const existingConversation = prevConversations.find(
+          (conv) => conv.id === newConversation.id
+        );
+        if (existingConversation) {
+          setSelectedConversation(existingConversation);
+          return prevConversations;
+        }
+        setSelectedConversation(newConversation);
+        return [newConversation, ...prevConversations];
+      });
+    } catch (err) {
+      console.error("Error creating conversation:", err);
+    } finally {
+      handleCloseNewChat();
     }
   };
 
-  // Fetch conversations from API
+  // Lấy danh sách cuộc trò chuyện từ Server
   const fetchConversations = async () => {
     setLoading(true);
     setError(null);
@@ -113,78 +116,118 @@ export default function Chat() {
     }
   };
 
-  // Load conversations when component mounts
   useEffect(() => {
     fetchConversations();
   }, []);
 
-  // Initialize with first conversation selected when available
+  // Tự động chọn cuộc trò chuyện đầu tiên nếu chưa chọn
   useEffect(() => {
     if (conversations.length > 0 && !selectedConversation) {
       setSelectedConversation(conversations[0]);
     }
   }, [conversations, selectedConversation]);
 
-  // Load messages from the conversation history when a conversation is selected
+  // Tải tin nhắn của cuộc trò chuyện hiện tại
   useEffect(() => {
-    const fetchMessages = async (conversationId) => {
-      try {
-        // Check if we already have messages for this conversation
-        if (!messagesMap[conversationId]) {
-          const response = await getMessages(conversationId);
+    if (!selectedConversation?.id) return;
+    const conversationId = selectedConversation.id;
+
+    // Đánh dấu cuộc trò chuyện đang chọn là đã đọc
+    setConversations((prevConversations) =>
+      prevConversations.map((conv) =>
+        conv.id === conversationId ? { ...conv, unread: 0 } : conv
+      )
+    );
+
+    // Chỉ fetch tin nhắn từ API nếu chưa lưu trong messagesMap
+    if (!messagesMap[conversationId]) {
+      getMessages(conversationId)
+        .then((response) => {
           if (response?.data?.result) {
-            // Sort messages by createdDate to ensure chronological order
             const sortedMessages = [...response.data.result].sort(
               (a, b) => new Date(a.createdDate) - new Date(b.createdDate)
             );
 
-            // Update messages map with the fetched messages
             setMessagesMap((prev) => ({
               ...prev,
               [conversationId]: sortedMessages,
             }));
           }
-        }
-
-        // Mark conversation as read when selected
-        setConversations((prevConversations) =>
-          prevConversations.map((conv) =>
-            conv.id === conversationId ? { ...conv, unread: 0 } : conv
-          )
-        );
-      } catch (err) {
-        console.error(
-          `Error fetching messages for conversation ${conversationId}:`,
-          err
-        );
-      }
-    };
-
-    if (selectedConversation?.id) {
-      fetchMessages(selectedConversation.id);
+        })
+        .catch((err) => {
+          console.error(
+            `Error fetching messages for conversation ${conversationId}:`,
+            err
+          );
+        });
     }
-  }, [selectedConversation, messagesMap]);
+  }, [selectedConversation?.id]); // Chỉ phụ thuộc vào ID hội thoại được chọn
+
   const currentMessages = selectedConversation
     ? messagesMap[selectedConversation.id] || []
     : [];
-  // Automatically scroll to the bottom when messages change or after sending a message
-  useEffect(() => {
-    scrollToBottom();
-  }, [currentMessages, scrollToBottom]);
-
-  // Also scroll when the conversation changes
-  useEffect(() => {
-    scrollToBottom();
-  }, [selectedConversation, scrollToBottom]);
 
   useEffect(() => {
-    // Initialize socket connection only once
+    scrollToBottom();
+  }, [currentMessages, selectedConversation, scrollToBottom]);
+
+  // Xử lý khi nhận tin nhắn từ Socket
+  const handleIncomingMessage = useCallback((incomingMsg) => {
+    const activeConv = selectedConversationRef.current;
+
+    setMessagesMap((prev) => {
+      const existingMessages = prev[incomingMsg.conversationId] || [];
+
+      // Kiểm tra nếu tin nhắn trùng lặp hoặc thay thế tin nhắn pending
+      const msgIndex = existingMessages.findIndex(
+        (msg) =>
+          msg.id === incomingMsg.id ||
+          (msg.pending && msg.message === incomingMsg.message)
+      );
+
+      let updatedMessages;
+      if (msgIndex !== -1) {
+        updatedMessages = [...existingMessages];
+        updatedMessages[msgIndex] = incomingMsg;
+      } else {
+        updatedMessages = [...existingMessages, incomingMsg];
+      }
+
+      updatedMessages.sort(
+        (a, b) => new Date(a.createdDate) - new Date(b.createdDate)
+      );
+
+      return {
+        ...prev,
+        [incomingMsg.conversationId]: updatedMessages,
+      };
+    });
+
+    // Cập nhật thông tin tin nhắn cuối cùng & tin nhắn chưa đọc
+    setConversations((prevConversations) =>
+      prevConversations.map((conv) =>
+        conv.id === incomingMsg.conversationId
+          ? {
+              ...conv,
+              lastMessage: incomingMsg.message,
+              unread:
+                activeConv?.id === incomingMsg.conversationId
+                  ? 0
+                  : (conv.unread || 0) + 1,
+              modifiedDate: incomingMsg.createdDate,
+            }
+          : conv
+      )
+    );
+  }, []);
+
+  // Khởi tạo và lắng nghe kết nối Socket.IO
+  useEffect(() => {
     if (!socketRef.current) {
-      console.log("Initializing socket connection...");
-
-      const connectionUrl = "http://localhost:8099?token=" + getToken();
-
-      socketRef.current = new io(connectionUrl);
+      const token = getToken();
+      socketRef.current = io("http://localhost:8099", {
+        query: { token },
+      });
 
       socketRef.current.on("connect", () => {
         console.log("Socket connected");
@@ -194,130 +237,83 @@ export default function Chat() {
         console.log("Socket disconnected");
       });
 
-      socketRef.current.on("message", (message) => {
-        console.log("New message received:", message);
+      socketRef.current.on("message", (rawMessage) => {
+        try {
+          const messageObject =
+            typeof rawMessage === "string"
+              ? JSON.parse(rawMessage)
+              : rawMessage;
+          console.log(" Received socket message:", messageObject);
 
-        /*
-        const messageObject = JSON.parse(message);
-        console.log("Parsed message object:", messageObject);
-
-        // Update messages in the UI when a new message is received
-        if (messageObject?.conversationId) {
-          handleIncomingMessage(messageObject);
+          if (messageObject?.conversationId) {
+            handleIncomingMessage(messageObject);
+          }
+        } catch (err) {
+          console.error("Error parsing socket message:", err);
         }
-        */
       });
     }
 
-    // Cleanup function - disconnect socket when component unmounts
     return () => {
       if (socketRef.current) {
-        console.log("Disconnecting socket...");
         socketRef.current.disconnect();
         socketRef.current = null;
       }
     };
-  }, []);
+  }, [handleIncomingMessage]);
 
-  // Update unread count when conversation is selected
-  useEffect(() => {
-    if (selectedConversation?.id && socketRef.current) {
-      // Mark the currently selected conversation as read
-      setConversations((prevConversations) =>
-        prevConversations.map((conv) =>
-          conv.id === selectedConversation.id ? { ...conv, unread: 0 } : conv
-        )
-      );
-    }
-  }, [selectedConversation]);
-
-  const handleConversationSelect = (conversation) => {
-    setSelectedConversation(conversation);
-  };
-
+  // Gửi tin nhắn mới (Optimistic Update)
   const handleSendMessage = async () => {
     if (!message.trim() || !selectedConversation) return;
 
-    // Clear input field
+    const textToSend = message;
+    const convId = selectedConversation.id;
+    const tempId = `temp-${Date.now()}`;
+
     setMessage("");
 
+    // Hiển thị ngay tin nhắn tạm thời lên UI (Pending)
+    const tempMessage = {
+      id: tempId,
+      conversationId: convId,
+      message: textToSend,
+      me: true,
+      pending: true,
+      createdDate: new Date().toISOString(),
+    };
+
+    setMessagesMap((prev) => ({
+      ...prev,
+      [convId]: [...(prev[convId] || []), tempMessage],
+    }));
+
     try {
-      // Send message to API
-      const response = await createMessage({
-        conversationId: selectedConversation.id,
-        message: message,
+      await createMessage({
+        conversationId: convId,
+        message: textToSend,
       });
     } catch (error) {
       console.error("Failed to send message:", error);
+      // Đánh dấu tin nhắn thất bại nếu gửi lỗi
+      setMessagesMap((prev) => ({
+        ...prev,
+        [convId]: (prev[convId] || []).map((m) =>
+          m.id === tempId ? { ...m, pending: false, failed: true } : m
+        ),
+      }));
     }
   };
-
-  // Helper function to handle incoming socket messages
-  const handleIncomingMessage = useCallback(
-    (message) => {
-  
-      // Add the new message to the appropriate conversation
-      setMessagesMap((prev) => {
-        const existingMessages = prev[message.conversationId] || [];
-
-        // Check if message already exists to avoid duplicates
-        const messageExists = existingMessages.some((msg) => {
-          // Primary: Compare by ID if both messages have IDs
-          if (msg.id && message.id) {
-            return msg.id === message.id;
-          }
-          
-          return false;
-        });
-
-        if (!messageExists) {
-          const updatedMessages = [...existingMessages, message].sort(
-            (a, b) => new Date(a.createdDate) - new Date(b.createdDate)
-          );
-
-          return {
-            ...prev,
-            [message.conversationId]: updatedMessages,
-          };
-        }
-
-        console.log("Message already exists, not adding");
-        return prev;
-      });
-
-      // Update the conversation list with the new last message
-      setConversations((prevConversations) => {        
-        const updatedConversations = prevConversations.map((conv) =>
-          conv.id === message.conversationId
-            ? {
-                ...conv,
-                lastMessage: message.message,
-                lastTimestamp: new Date(message.createdDate).toLocaleString(),
-                unread:
-                  selectedConversation?.id === message.conversationId
-                    ? 0
-                    : (conv.unread || 0) + 1,
-                modifiedDate: message.createdDate,
-              }
-            : conv
-        );
-        
-        return updatedConversations;
-      });
-    },
-    [selectedConversation]
-  );
 
   return (
     <Scene>
       <Card
         sx={{
           width: "100%",
-          height: "calc(100vh - 64px)" /* 100vh minus header (64px) */,
+          height: "calc(100vh - 64px)",
           maxHeight: "100%",
           display: "flex",
           flexDirection: "row",
-          mb: "-64px" /* Counteract the parent padding */,
+          mb: "-64px",
           overflow: "hidden",
         }}
       >
@@ -331,7 +327,6 @@ export default function Chat() {
             flexDirection: "column",
           }}
         >
-          {" "}
           <Box
             sx={{
               p: 2,
@@ -342,7 +337,7 @@ export default function Chat() {
               alignItems: "center",
             }}
           >
-            <Typography variant="h6">Chats</Typography>{" "}
+            <Typography variant="h6">Chats</Typography>
             <IconButton
               color="primary"
               size="small"
@@ -356,14 +351,14 @@ export default function Chat() {
               }}
             >
               <AddIcon fontSize="small" />
-            </IconButton>{" "}
+            </IconButton>
             <NewChatPopover
               anchorEl={newChatAnchorEl}
               open={Boolean(newChatAnchorEl)}
               onClose={handleCloseNewChat}
               onSelectUser={handleSelectNewChatUser}
             />
-          </Box>{" "}
+          </Box>
           <Box
             sx={{
               flexGrow: 1,
@@ -412,10 +407,9 @@ export default function Chat() {
                 <List sx={{ width: "100%" }}>
                   {conversations.map((conversation) => (
                     <React.Fragment key={conversation.id}>
-                      {" "}
                       <ListItem
                         alignItems="flex-start"
-                        onClick={() => handleConversationSelect(conversation)}
+                        onClick={() => setSelectedConversation(conversation)}
                         sx={{
                           cursor: "pointer",
                           bgcolor:
@@ -431,7 +425,7 @@ export default function Chat() {
                           <Badge
                             color="error"
                             badgeContent={conversation.unread}
-                            invisible={conversation.unread === 0}
+                            invisible={!conversation.unread || conversation.unread === 0}
                             overlap="circular"
                           >
                             <Avatar
@@ -462,13 +456,15 @@ export default function Chat() {
                                 color="text.secondary"
                                 sx={{ display: "inline", fontSize: "0.7rem" }}
                               >
-                                {new Date(
-                                  conversation.modifiedDate
-                                ).toLocaleString("vi-VN", {
-                                  year: "numeric",
-                                  month: "numeric",
-                                  day: "numeric",
-                                })}
+                                {conversation.modifiedDate
+                                  ? new Date(
+                                      conversation.modifiedDate
+                                    ).toLocaleString("vi-VN", {
+                                      year: "numeric",
+                                      month: "numeric",
+                                      day: "numeric",
+                                    })
+                                  : ""}
                               </Typography>
                             </Stack>
                           }
@@ -531,7 +527,7 @@ export default function Chat() {
                 <Typography variant="h6">
                   {selectedConversation.conversationName}
                 </Typography>
-              </Box>{" "}
+              </Box>
               <Box
                 id="messageContainer"
                 ref={messageContainerRef}
@@ -544,26 +540,23 @@ export default function Chat() {
                   position: "relative",
                 }}
               >
-                {" "}
                 <Box
                   sx={{
                     display: "flex",
                     flexDirection: "column",
                     width: "100%",
-                    margin:
-                      "auto 0 0 0" /* Push to bottom, but allow scrolling */,
+                    margin: "auto 0 0 0",
                   }}
                 >
                   {currentMessages.map((msg) => {
-                    // Extract background color logic to avoid nested ternary
-                    let backgroundColor = "#f5f5f5"; // default for others
+                    let backgroundColor = "#f5f5f5";
                     if (msg.me) {
                       backgroundColor = msg.failed ? "#ffebee" : "#e3f2fd";
                     }
 
                     return (
                       <Box
-                        key={msg.id}
+                        key={msg.id || msg.createdDate}
                         sx={{
                           display: "flex",
                           justifyContent: msg.me ? "flex-end" : "flex-start",
@@ -616,9 +609,11 @@ export default function Chat() {
                               variant="caption"
                               sx={{ display: "block", textAlign: "right" }}
                             >
-                              {new Date(msg.createdDate).toLocaleString()}
+                              {msg.createdDate
+                                ? new Date(msg.createdDate).toLocaleString()
+                                : ""}
                             </Typography>
-                          </Stack>{" "}
+                          </Stack>
                         </Paper>
                         {msg.me && (
                           <Avatar
